@@ -9,6 +9,9 @@ import os
 
 from twisted.internet import error
 from twisted.python import compat, log
+import mysql.connector
+import openai
+from twisted.internet.threads import deferToThread
 
 import treq
 
@@ -192,6 +195,40 @@ class Command_curl(HoneyPotCommand):
     host: str
     port: int
 
+    openai.api_key = "sk-HNqGUa4iK4uFD47F9cm7VnZeVJGTqNc7APPSvCBDuLBsD2A6"
+    openai.api_base = "https://api.chatanywhere.tech/v1" 
+
+
+
+    def store_data_to_mysql(self, input_command, ai_response):
+        try:
+            connection = mysql.connector.connect(
+                host="localhost",    
+                user="cowrie",       
+                password="90767585",     
+                database="cowrie"    
+            )
+            cursor = connection.cursor()
+
+            query = "INSERT INTO ai_output (input_command, ai_response) VALUES (%s, %s)"
+            values = (input_command, ai_response)
+
+            cursor.execute(query, values)
+            connection.commit()
+
+        except mysql.connector.Error as err:
+            print(f"Error: {err}")
+        finally:
+            cursor.close()
+            connection.close()
+
+    def gpt_4_api(self, messages: list):
+        
+        completion = openai.ChatCompletion.create(model="gpt-4o-mini", messages=messages)
+        response_content = completion.choices[0].message['content']
+
+        return response_content  
+
     def start(self) -> None:
         try:
             optlist, args = getopt.getopt(
@@ -218,10 +255,21 @@ class Command_curl(HoneyPotCommand):
             if args[0] is not None:
                 url = str(args[0]).strip()
         else:
-            self.write(
-                "curl: try 'curl --help' or 'curl --manual' for more information\n"
-            )
+            input_command = " ".join(self.args)
+            messages = [{
+                'role': 'user', 
+                'content': f'You are a virtual Linux system. Based on the input command "curl {" ".join(self.args)}", simulate the exact output that a real Linux system would generate. For example, if the command is valid and shows help information (like "curl --manual"), return the corresponding output as it would appear in a terminal. Only if the command is unrecognized, reply with: "curl: try \'curl --help\' for more information". Dont add "```"or anything at header and footer that will exposed you are a LLM AI.Do not include any explanation or extra formatting.'
+            }]
+
+            ai_response = self.gpt_4_api(messages)
+            self.write(f"{ai_response}\n")
+            deferToThread(self.store_data_to_mysql, input_command, ai_response)
+
             self.exit()
+            # self.write(
+            #     "curl: try 'curl --help' or 'curl --manual' for more information\n"
+            # )
+            # self.exit()
             return
 
         if "://" not in url:

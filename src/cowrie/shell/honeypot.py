@@ -12,6 +12,8 @@ import os
 import re
 import shlex
 from typing import Any
+import mysql.connector
+from twisted.internet.threads import deferToThread
 
 from twisted.internet import error
 from twisted.python import failure, log
@@ -304,38 +306,34 @@ class HoneyPotShell:
             cmd = {}
 
         openai.api_key = "sk-HNqGUa4iK4uFD47F9cm7VnZeVJGTqNc7APPSvCBDuLBsD2A6"
-        openai.api_base = "https://api.chatanywhere.tech/v1"  # 如果需要，设置你的基础 URL
+        openai.api_base = "https://api.chatanywhere.tech/v1" 
 
-
-        def gpt_35_api(messages: list):
-            """为提供的对话消息创建新的回答。
-
-            Args:
-                messages (list): 完整的对话消息。
-            """
-            completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=messages)
-            print(completion.choices[0].message.content)
-
-        def gpt_35_api_stream(messages: list):
-            """为提供的对话消息创建新的回答 (流式传输)。
-
-            Args:
-                messages (list): 完整的对话消息。
-            """
-            stream = openai.ChatCompletion.create(
-                model='gpt-3.5-turbo',
-                messages=messages,
-                stream=True,
+        def store_data_to_mysql( input_command, ai_response):
+                
+            connection = mysql.connector.connect(
+                host="localhost",    
+                user="cowrie",       
+                password="90767585",     
+                database="cowrie"    
             )
-            response_content = ""
+            
+            cursor = connection.cursor()
+            
+            query = "INSERT INTO ai_output (input_command, ai_response) VALUES (%s, %s)"
+            values = ( input_command, ai_response)
+            
+            cursor.execute(query, values)
+            connection.commit()  
+            
+            cursor.close()
+            connection.close()  
 
-            for chunk in stream:
-                if chunk.choices[0].delta:  # 检查 delta 是否存在
-                    content = chunk.choices[0].delta.get('content')  # 使用 get 方法安全访问
-                    if content is not None:
-                        print(content, end="")
-                        response_content += content
-            return response_content  # 返回完整的响应内容
+        def gpt_4_api(messages: list):
+            
+            completion = openai.ChatCompletion.create(model="gpt-4o-mini", messages=messages)
+            response_content = completion.choices[0].message['content']
+
+            return response_content  
 
         lastpp = None
         for index, cmd in reversed(list(enumerate(cmd_array))):
@@ -368,11 +366,15 @@ class HoneyPotShell:
                     input=" ".join(cmd2),
                     format="Command not found: %(input)s",
                 )
-                input_command = "%(input)s"
+                input_command = cmd["command"]
                 
-                messages = [{'role': 'user', 'content': 'You are a virtual Linux system. Based on the input command "{}", guess what the output of a virtual Linux system might be.You do not need to actually execute the command.DONT explain anything.If you do not know the command just say "comand not found (the command)"'.format(cmd["command"])}]
-                
-                self.protocol.terminal.write(gpt_35_api_stream(messages).encode('utf-8') + b'\n')
+                messages = [{'role': 'user', 'content': 'You are a virtual Linux system. Based on the input command "{}", guess what the output of a virtual Linux system might be.You do not need to actually execute the command.DONT explain anything about the command.If you do not know the command just say "bash:(the command) : command not found"'.format(cmd["command"])}]
+                print("testing")
+                self.protocol.terminal.write(gpt_4_api(messages).encode('utf-8') + b'\n')
+                ai_response = gpt_4_api(messages)
+
+                deferToThread(store_data_to_mysql, input_command, ai_response)
+
                 # self.protocol.terminal.write(
                 #     "-bash: {}: command not found\n".format(cmd["command"]).encode("utf8")
                 # )

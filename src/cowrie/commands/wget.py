@@ -6,8 +6,11 @@ from __future__ import annotations
 import getopt
 import ipaddress
 import os
+import openai
 import time
 from typing import Any
+import mysql.connector
+from twisted.internet.threads import deferToThread
 
 from twisted.internet import error
 from twisted.python import compat, log
@@ -75,12 +78,55 @@ class Command_wget(HoneyPotCommand):
     host: str
     started: float
 
+    openai.api_key = "sk-HNqGUa4iK4uFD47F9cm7VnZeVJGTqNc7APPSvCBDuLBsD2A6"
+    openai.api_base = "https://api.chatanywhere.tech/v1" 
+
+            
+    def store_data_to_mysql(self, input_command, ai_response):
+        try:
+            connection = mysql.connector.connect(
+                host="localhost",    
+                user="cowrie",       
+                password="90767585",     
+                database="cowrie"    
+            )
+            cursor = connection.cursor()
+
+            query = "INSERT INTO ai_output (input_command, ai_response) VALUES (%s, %s)"
+            values = (input_command, ai_response)
+
+            cursor.execute(query, values)
+            connection.commit()
+
+        except mysql.connector.Error as err:
+            print(f"Error: {err}")
+        finally:
+            cursor.close()
+            connection.close()
+
+    def gpt_4_api(self, messages: list):
+        
+        completion = openai.ChatCompletion.create(model="gpt-4o-mini", messages=messages)
+        response_content = completion.choices[0].message['content']
+
+        return response_content  
+
     def start(self) -> None:
         url: str
         try:
             optlist, args = getopt.getopt(self.args, "cqO:P:", ["header="])
         except getopt.GetoptError:
-            self.errorWrite("Unrecognized option\n")
+            
+            input_command = " ".join(self.args)
+            messages = [{
+                'role': 'user', 
+                'content': f'You are a virtual Linux system. Based on the input command "wget {self.args}", guess what the output of a virtual Linux system might be. You do not need to actually execute the command. DON’T explain anything about the command. Dont add "```"or anything at header and footer that will exposed you are a LLM AI. If you do not know the command just say "bash: wget {self.args} : command not found"'
+            }]
+
+            ai_response = self.gpt_4_api(messages)
+            self.errorWrite(f"{ai_response}\n")
+              
+            self.store_data_to_mysql(input_command, ai_response)
             self.exit()
             return
 
